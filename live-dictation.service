@@ -1,0 +1,20 @@
+[Unit]
+Description=Live dictation daemon (push-to-talk via Right Ctrl)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%BINARY%
+Restart=on-failure
+RestartSec=5s
+PassEnvironment=DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR
+Environment=WHISPER_MODEL_PATH=%h/.cache/whisper/ggml-large-v3-turbo.bin
+
+MemoryMax=2G
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=live-dictation
+
+[Install]
+WantedBy=graphical-session.target

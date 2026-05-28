@@ -1,0 +1,24 @@
+[package]
+name = "dictate"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "dictate"
+path = "src/main.rs"
+
+[dependencies]
+whisper-rs = "0.14"
+cpal = "0.15"
+rdev = "0.5"
+anyhow = "1"
+ctrlc = { version = "3", features = ["termination"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[features]
+default = []
+cuda = ["whisper-rs/cuda"]
