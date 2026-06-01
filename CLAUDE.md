@@ -22,8 +22,20 @@ journalctl --user -u live-dictation -f
 
 # Run directly (stop service first to avoid mic conflicts)
 systemctl --user stop live-dictation
-cargo run --release
+WHISPER_MODEL_PATH=~/.cache/whisper/ggml-small.bin cargo run --release
 ```
+
+## Changing the Whisper model
+
+`install.sh` is the single source of truth for the model. To switch models:
+
+1. Edit `MODEL_FILE` at the top of `install.sh` (e.g. `ggml-large-v3-turbo.bin`)
+2. Run `./install.sh` — it downloads the model if needed, rebuilds, and restarts the service
+
+Available models (GGML format from `huggingface.co/ggerganov/whisper.cpp`):
+`tiny` (~75 MB) · `base` (~142 MB) · `small` (~466 MB) · `medium` (~1.5 GB) · `large-v3-turbo` (~809 MB) · `large-v3` (~2.9 GB)
+
+`WHISPER_MODEL_PATH` is required — the binary exits with an error if it's not set.
 
 ## Installation (first time or after rebuilding)
 
@@ -31,7 +43,7 @@ cargo run --release
 ./install.sh
 ```
 
-This installs apt packages, adds user to `input` group (needed by rdev/evdev for keyboard hooks), downloads the GGML large-v3-turbo model (~1.5 GB to `~/.cache/whisper/`), builds the release binary, and enables the systemd user service.
+This installs apt packages, adds user to `input` group (needed by rdev/evdev for keyboard hooks), downloads the configured GGML model to `~/.cache/whisper/`, builds the release binary, and enables the systemd user service.
 
 **Important:** After `install.sh`, log out and back in if the `input` group was newly added.
 
@@ -61,7 +73,7 @@ Three concurrent execution contexts:
 
 **Key globals:** `recording` (AtomicBool), `audio_frames` (Mutex<Vec<f32>>), mpsc channel.
 
-**Model format:** GGML `.bin` file (whisper.cpp format), not CTranslate2. Currently using `ggml-large-v3-turbo.bin` (~1.5 GB). Downloaded from `huggingface.co/ggerganov/whisper.cpp`. Path configurable via `WHISPER_MODEL_PATH` env var.
+**Model format:** GGML `.bin` file (whisper.cpp format), not CTranslate2. Currently using `ggml-small.bin` (~466 MB). Downloaded from `huggingface.co/ggerganov/whisper.cpp`. Path set via `WHISPER_MODEL_PATH` env var (required — binary exits if unset). To change model, see "Changing the Whisper model" above.
 
 **Keyboard listener:** `rdev::listen` uses Linux evdev — requires user to be in the `input` group. This differs from the Python version which used pynput/XRecord (no group needed).
 
@@ -73,4 +85,4 @@ Three concurrent execution contexts:
 
 ## systemd service notes
 
-`live-dictation.service` uses `%BINARY%` as a placeholder replaced by `install.sh`. The service passes `DISPLAY`, `XAUTHORITY`, `DBUS_SESSION_BUS_ADDRESS`, and `XDG_RUNTIME_DIR` from the user environment. No `LD_LIBRARY_PATH` needed (no Python/NVIDIA runtime dependency). Memory capped at 2 GB (increased from 600 MB to accommodate the large-v3-turbo model).
+`live-dictation.service` uses `%BINARY%` and `%MODEL_PATH%` as placeholders substituted by `install.sh`. The service passes `DISPLAY`, `XAUTHORITY`, `DBUS_SESSION_BUS_ADDRESS`, and `XDG_RUNTIME_DIR` from the user environment. No `LD_LIBRARY_PATH` needed. Memory capped at 2 GB.

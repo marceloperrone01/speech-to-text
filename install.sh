@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_DIR="$HOME/.cache/whisper"
-MODEL_FILE="$MODEL_DIR/ggml-large-v3-turbo.bin"
+MODEL_FILE="$MODEL_DIR/ggml-small.bin"
 SERVICE_DIR="$HOME/.config/systemd/user"
 SERVICE_SRC="$SCRIPT_DIR/live-dictation.service"
 SERVICE_DST="$SERVICE_DIR/live-dictation.service"
@@ -22,11 +22,11 @@ else
     echo "    Already in input group."
 fi
 
-echo "==> Downloading GGML Whisper large-v3-turbo model (~1.5 GB)…"
+echo "==> Downloading GGML Whisper small model (~466 MB)…"
 mkdir -p "$MODEL_DIR"
 if [[ ! -f "$MODEL_FILE" ]]; then
     curl -L \
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin" \
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin" \
         -o "$MODEL_FILE"
     echo "    Model saved to $MODEL_FILE"
 else
@@ -42,7 +42,7 @@ echo "    Binary: $BINARY"
 
 echo "==> Installing systemd user service…"
 mkdir -p "$SERVICE_DIR"
-sed "s|%BINARY%|$BINARY|g" "$SERVICE_SRC" > "$SERVICE_DST"
+sed "s|%BINARY%|$BINARY|g; s|%MODEL_PATH%|$MODEL_FILE|g" "$SERVICE_SRC" > "$SERVICE_DST"
 systemctl --user daemon-reload
 systemctl --user enable --now live-dictation
 

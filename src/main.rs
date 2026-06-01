@@ -41,11 +41,14 @@ const TERMINAL_CLASSES: &[&str] = &[
 ];
 
 fn model_path() -> PathBuf {
-    if let Ok(p) = env::var("WHISPER_MODEL_PATH") {
-        return PathBuf::from(p);
+    match env::var("WHISPER_MODEL_PATH") {
+        Ok(p) => PathBuf::from(p),
+        Err(_) => {
+            eprintln!("error: WHISPER_MODEL_PATH not set. Run install.sh or set the variable manually.");
+            eprintln!("  example: WHISPER_MODEL_PATH=~/.cache/whisper/ggml-small.bin cargo run --release");
+            std::process::exit(1);
+        }
     }
-    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".cache/whisper/ggml-large-v3-turbo.bin")
 }
 
 fn notify(summary: &str, body: &str, icon: &str, timeout_ms: u32) {
