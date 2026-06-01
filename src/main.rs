@@ -212,34 +212,27 @@ fn transcription_worker(rx: mpsc::Receiver<AudioJob>) {
             continue;
         }
 
-        let n = match state.full_n_segments() {
-            Ok(n) => n,
-            Err(e) => {
-                eprintln!("[live-dictation] full_n_segments error: {e}");
-                continue;
-            }
-        };
+        let n = state.full_n_segments();
 
         let mut text = String::new();
         for i in 0..n {
-            match state.full_get_segment_text(i) {
-                Ok(s) => text.push_str(&s),
-                Err(e) => eprintln!("[live-dictation] segment {i} error: {e}"),
+            if let Some(seg) = state.get_segment(i) {
+                match seg.to_str() {
+                    Ok(s) => text.push_str(s),
+                    Err(e) => eprintln!("[live-dictation] segment {i} error: {e}"),
+                }
             }
         }
         let text = text.trim().to_string();
 
-        if let Ok(lang_id) = state.full_lang_id_from_state() {
-            if let Some(lang) = get_lang_str(lang_id) {
-                eprintln!("[live-dictation] [{lang}] {text:?}");
-                if !SUPPORTED_LANGUAGES.contains(&lang) {
-                    eprintln!(
-                        "[live-dictation] Unsupported language {lang:?} detected; \
-                         result may be inaccurate."
-                    );
-                }
-            } else {
-                eprintln!("[live-dictation] {text:?}");
+        let lang_id = state.full_lang_id_from_state();
+        if let Some(lang) = get_lang_str(lang_id) {
+            eprintln!("[live-dictation] [{lang}] {text:?}");
+            if !SUPPORTED_LANGUAGES.contains(&lang) {
+                eprintln!(
+                    "[live-dictation] Unsupported language {lang:?} detected; \
+                     result may be inaccurate."
+                );
             }
         } else {
             eprintln!("[live-dictation] {text:?}");
@@ -271,12 +264,12 @@ fn main() -> Result<()> {
         .context("No input audio device found")?;
     eprintln!(
         "[live-dictation] Audio device: {}",
-        device.name().unwrap_or_default()
+        device.description().as_ref().map(|d| d.name()).unwrap_or("unknown").to_string()
     );
 
     let config = cpal::StreamConfig {
         channels: 1,
-        sample_rate: cpal::SampleRate(SAMPLE_RATE),
+        sample_rate: SAMPLE_RATE,
         buffer_size: cpal::BufferSize::Default,
     };
 

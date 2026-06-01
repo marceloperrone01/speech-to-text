@@ -8,8 +8,8 @@ name = "dictate"
 path = "src/main.rs"
 
 [dependencies]
-whisper-rs = "0.14"
-cpal = "0.15"
+whisper-rs = "0.16"
+cpal = "0.17"
 rdev = "0.5"
 anyhow = "1"
 ctrlc = { version = "3", features = ["termination"] }
@@ -18,6 +18,8 @@ ctrlc = { version = "3", features = ["termination"] }
 opt-level = 3
 lto = true
 codegen-units = 1
+panic = "abort"
+strip = true
 
 [features]
 default = []
