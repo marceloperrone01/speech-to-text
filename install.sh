@@ -35,7 +35,7 @@ fi
 
 echo "==> Building release binary…"
 cd "$SCRIPT_DIR"
-cargo build --release
+cargo build --release --features cuda
 
 BINARY="$SCRIPT_DIR/target/release/dictate"
 echo "    Binary: $BINARY"
