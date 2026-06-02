@@ -11,7 +11,7 @@ use std::{
         mpsc, Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use whisper_rs::{
     get_lang_str, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
@@ -19,12 +19,13 @@ use whisper_rs::{
 
 const SAMPLE_RATE: u32 = 16000;
 const MIN_AUDIO_SAMPLES: usize = 8000; // 0.5 s at 16 kHz
-const PRE_TYPE_SLEEP_MS: u64 = 150;
+const PRE_TYPE_SLEEP_MS: u64 = 50;
 const SUPPORTED_LANGUAGES: &[&str] = &["pt", "en"];
 struct AudioJob {
     frames: Vec<f32>,
     win_id: String,
     win_class: String,
+    released_at: Instant,
 }
 
 const TERMINAL_CLASSES: &[&str] = &[
@@ -205,12 +206,18 @@ fn transcription_worker(rx: mpsc::Receiver<AudioJob>) {
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
-        params.set_n_threads(4);
+        params.set_n_threads(8);
 
+        let audio_secs = job.frames.len() as f32 / SAMPLE_RATE as f32;
+        let t0 = Instant::now();
         if let Err(e) = state.full(params, &job.frames) {
             eprintln!("[live-dictation] Whisper inference error: {e}");
             continue;
         }
+        let infer_ms = t0.elapsed().as_millis();
+        eprintln!(
+            "[live-dictation] inference: {infer_ms} ms for {audio_secs:.2} s of audio"
+        );
 
         let n = state.full_n_segments();
 
@@ -241,6 +248,10 @@ fn transcription_worker(rx: mpsc::Receiver<AudioJob>) {
         if !text.is_empty() {
             inject_text(&text, &job.win_id, &job.win_class);
         }
+        eprintln!(
+            "[live-dictation] TOTAL release→done: {} ms",
+            job.released_at.elapsed().as_millis()
+        );
     }
 
     eprintln!("[live-dictation] Transcription worker stopped.");
@@ -323,6 +334,7 @@ fn main() -> Result<()> {
         }
         EventType::KeyRelease(Key::AltGr) => {
             if recording_kbd.swap(false, Ordering::SeqCst) {
+                let released_at = Instant::now();
                 let frames = {
                     let mut lock = audio_frames_kbd.lock().unwrap();
                     let f = lock.clone();
@@ -343,6 +355,7 @@ fn main() -> Result<()> {
                         frames,
                         win_id,
                         win_class,
+                        released_at,
                     });
                 } else {
                     eprintln!("[live-dictation] Audio too short, skipping.");
