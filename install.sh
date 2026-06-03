@@ -3,7 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_DIR="$HOME/.cache/whisper"
-MODEL_FILE="$MODEL_DIR/ggml-small.bin"
+# MODEL_FILE="$MODEL_DIR/ggml-small.bin"
+MODEL_FILE="$MODEL_DIR/ggml-large-v3-turbo-q5_0.bin"
 SERVICE_DIR="$HOME/.config/systemd/user"
 SERVICE_SRC="$SCRIPT_DIR/live-dictation.service"
 SERVICE_DST="$SERVICE_DIR/live-dictation.service"
@@ -22,11 +23,13 @@ else
     echo "    Already in input group."
 fi
 
-echo "==> Downloading GGML Whisper small model (~466 MB)…"
 mkdir -p "$MODEL_DIR"
+MODEL_NAME="$(basename "$MODEL_FILE")"
+MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$MODEL_NAME"
 if [[ ! -f "$MODEL_FILE" ]]; then
+    echo "==> Downloading GGML Whisper model: $MODEL_NAME…"
     curl -L \
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin" \
+        "$MODEL_URL" \
         -o "$MODEL_FILE"
     echo "    Model saved to $MODEL_FILE"
 else
