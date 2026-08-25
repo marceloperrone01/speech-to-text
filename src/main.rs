@@ -1,20 +1,21 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use rdev::{listen, Event, EventType, Key};
+use rdev::{Event, EventType, Key, listen};
 use std::{
     env,
     io::Write,
     path::PathBuf,
     process::{Command, Stdio},
     sync::{
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc,
     },
     thread,
     time::{Duration, Instant},
 };
 use whisper_rs::{
-    get_lang_str, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
+    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, get_lang_str,
 };
 
 const SAMPLE_RATE: u32 = 16000;
@@ -30,6 +31,7 @@ struct AudioJob {
 
 const TERMINAL_CLASSES: &[&str] = &[
     "gnome-terminal",
+    "ghostty",
     "xterm",
     "konsole",
     "alacritty",
@@ -45,8 +47,12 @@ fn model_path() -> PathBuf {
     match env::var("WHISPER_MODEL_PATH") {
         Ok(p) => PathBuf::from(p),
         Err(_) => {
-            eprintln!("error: WHISPER_MODEL_PATH not set. Run install.sh or set the variable manually.");
-            eprintln!("  example: WHISPER_MODEL_PATH=~/.cache/whisper/ggml-small.bin cargo run --release");
+            eprintln!(
+                "error: WHISPER_MODEL_PATH not set. Run install.sh or set the variable manually."
+            );
+            eprintln!(
+                "  example: WHISPER_MODEL_PATH=~/.cache/whisper/ggml-small.bin cargo run --release"
+            );
             std::process::exit(1);
         }
     }
@@ -215,9 +221,7 @@ fn transcription_worker(rx: mpsc::Receiver<AudioJob>) {
             continue;
         }
         let infer_ms = t0.elapsed().as_millis();
-        eprintln!(
-            "[live-dictation] inference: {infer_ms} ms for {audio_secs:.2} s of audio"
-        );
+        eprintln!("[live-dictation] inference: {infer_ms} ms for {audio_secs:.2} s of audio");
 
         let n = state.full_n_segments();
 
@@ -275,7 +279,12 @@ fn main() -> Result<()> {
         .context("No input audio device found")?;
     eprintln!(
         "[live-dictation] Audio device: {}",
-        device.description().as_ref().map(|d| d.name()).unwrap_or("unknown").to_string()
+        device
+            .description()
+            .as_ref()
+            .map(|d| d.name())
+            .unwrap_or("unknown")
+            .to_string()
     );
 
     let config = cpal::StreamConfig {
