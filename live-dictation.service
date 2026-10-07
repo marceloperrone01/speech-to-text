@@ -1,5 +1,5 @@
 [Unit]
-Description=Live dictation daemon (push-to-talk via Right Ctrl)
+Description=Live dictation daemon (push-to-talk via Right Alt)
 After=graphical-session.target
 PartOf=graphical-session.target
 

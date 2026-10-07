@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## What this is
 
-Rust port of the push-to-talk dictation daemon. Hold Right Ctrl → audio is recorded → release → whisper.cpp (via whisper-rs) transcribes → xdotool/xclip injects result into the focused window. Supports pt-BR and en-US (auto-detected per utterance).
+Rust port of the push-to-talk dictation daemon. Hold Right Alt (AltGr) → audio is recorded → release → whisper.cpp (via whisper-rs) transcribes → xclip + a uinput virtual keyboard paste the result into the focused window. Works on Wayland (GNOME 50 / Ubuntu 26.04) and X11. Supports pt-BR and en-US (auto-detected per utterance).
 
 The original Python version lives at `../voice-to-text/`.
 
@@ -43,7 +43,7 @@ Available models (GGML format from `huggingface.co/ggerganov/whisper.cpp`):
 ./install.sh
 ```
 
-This installs apt packages, adds user to `input` group (needed by rdev/evdev for keyboard hooks), downloads the configured GGML model to `~/.cache/whisper/`, builds the release binary, and enables the systemd user service.
+This installs apt packages, adds user to `input` group (needed by evdev to read keyboards), installs a udev rule giving the `input` group access to `/dev/uinput` (needed to paste on Wayland), downloads the configured GGML model to `~/.cache/whisper/`, builds the release binary, and enables the systemd user service.
 
 **Important:** After `install.sh`, log out and back in if the `input` group was newly added.
 
@@ -65,21 +65,21 @@ Three concurrent execution contexts:
 
 | Context | Role |
 |---|---|
-| Main thread | Runs `rdev::listen` (blocks); fires key-press/release callbacks |
+| Main thread | Runs `listen_evdev` (blocks on one reader thread per keyboard in `/dev/input`); fires key-press/release callbacks |
 | `cpal` audio thread | Fires per audio block; appends to `audio_frames` while `recording` is true |
-| `transcription-worker` thread | Blocks on `mpsc::Receiver`; calls whisper-rs then xdotool |
+| `transcription-worker` thread | Blocks on `mpsc::Receiver`; calls whisper-rs then `inject_text()` |
 
-**Data flow:** `KeyPress(ControlRight)` sets `recording` → cpal callback accumulates f32 PCM frames → `KeyRelease(ControlRight)` clears `recording`, snapshots frames, sends `Vec<f32>` over channel → worker calls `state.full()`, calls `inject_text()` → `xdotool key`.
+**Data flow:** `KEY_RIGHTALT` press sets `recording` → cpal callback accumulates f32 PCM frames → `KEY_RIGHTALT` release clears `recording`, snapshots frames, sends `Vec<f32>` over channel → worker calls `state.full()`, calls `inject_text()` → clipboard + paste keystroke.
 
 **Key globals:** `recording` (AtomicBool), `audio_frames` (Mutex<Vec<f32>>), mpsc channel.
 
 **Model format:** GGML `.bin` file (whisper.cpp format), not CTranslate2. Currently using `ggml-small.bin` (~466 MB). Downloaded from `huggingface.co/ggerganov/whisper.cpp`. Path set via `WHISPER_MODEL_PATH` env var (required — binary exits if unset). To change model, see "Changing the Whisper model" above.
 
-**Keyboard listener:** `rdev::listen` uses Linux evdev — requires user to be in the `input` group. This differs from the Python version which used pynput/XRecord (no group needed).
+**Keyboard listener:** the `evdev` crate reads `/dev/input/event*` directly (works on Wayland and X11) — requires membership in the `input` group. `rdev::listen` was dropped because it uses X11 XRecord, which sees no keys on Wayland. Hotplugged keyboards need a service restart.
 
-**Text injection:** Same mechanism as Python: `xclip -selection clipboard` then `xdotool key ctrl+v` (or `ctrl+shift+v` for terminals).
+**Text injection:** `xclip -selection clipboard` (via XWayland, bridged to the Wayland clipboard), then `uinput_paste()` emits Ctrl+V (Ctrl+Shift+V for terminals) from a virtual keyboard; needs `/dev/uinput` access (udev rule from `install.sh`). If uinput fails, it falls back to `xdotool key` (X11/XWayland only). On Wayland the active window can't be detected for native windows, so the class defaults to `unknown-terminal` → Ctrl+Shift+V.
 
-**xdotool delay:** `PRE_TYPE_SLEEP_MS = 150` lets X11 process the Ctrl key-up before xdotool fires.
+**Pre-paste delay:** `PRE_TYPE_SLEEP_MS = 50` lets the push-to-talk key-up be processed before the paste fires.
 
 **Minimum audio gate:** `MIN_AUDIO_SAMPLES = 8000` (0.5 s at 16 kHz) prevents hallucination on accidental brief presses.
 

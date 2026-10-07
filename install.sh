@@ -23,6 +23,12 @@ else
     echo "    Already in input group."
 fi
 
+echo "==> Allowing the 'input' group to use /dev/uinput (needed to paste on Wayland)…"
+echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"' \
+    | sudo tee /etc/udev/rules.d/60-live-dictation-uinput.rules >/dev/null
+sudo udevadm control --reload-rules
+sudo udevadm trigger /dev/uinput
+
 mkdir -p "$MODEL_DIR"
 MODEL_NAME="$(basename "$MODEL_FILE")"
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$MODEL_NAME"

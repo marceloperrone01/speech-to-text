@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use rdev::{Event, EventType, Key, listen};
+use evdev::{AttributeSet, EventType as EvType, InputEvent, KeyCode, uinput::VirtualDevice};
 use std::{
     env,
     io::Write,
@@ -158,6 +158,7 @@ fn inject_text(text: &str, win_id: &str, win_class: &str) {
 
     eprintln!("[live-dictation] window class={cls:?} is_term={is_term} paste_key={paste_key}");
 
+    // xclip talks to XWayland, which mutter bridges to the Wayland clipboard.
     let xclip_result = Command::new("xclip")
         .args(["-selection", "clipboard"])
         .env("DISPLAY", &display)
@@ -173,12 +174,19 @@ fn inject_text(text: &str, win_id: &str, win_class: &str) {
         eprintln!("[live-dictation] xclip failed: {e}");
         return;
     }
+    // Let the clipboard owner settle before the paste keystroke.
+    thread::sleep(Duration::from_millis(30));
 
-    // Send the paste via XTEST (no `--window`): XTEST events are indistinguishable
-    // from real input, so GTK/VTE apps (gnome-terminal, gnome-text-editor) accept
-    // them — unlike `--window`, which uses XSendEvent and is ignored as synthetic.
-    // First raise/focus the target window so XTEST lands in the right place even
-    // if focus drifted while transcription ran.
+    // Wayland: xdotool cannot reach native windows, so emit the paste through a
+    // uinput virtual keyboard (needs /dev/uinput access, see install.sh).
+    match uinput_paste(is_term) {
+        Ok(()) => {
+            eprintln!("[live-dictation] Injected via uinput: {text:?}");
+            return;
+        }
+        Err(e) => eprintln!("[live-dictation] uinput paste failed ({e}); falling back to xdotool"),
+    }
+
     let mut cmd = Command::new("xdotool");
     cmd.env("DISPLAY", &display).env("XAUTHORITY", &xauth);
     if !win_id.is_empty() {
@@ -190,6 +198,37 @@ fn inject_text(text: &str, win_id: &str, win_class: &str) {
         Ok(_) => eprintln!("[live-dictation] Injected: {text:?}"),
         Err(e) => eprintln!("[live-dictation] xdotool failed: {e}"),
     }
+}
+
+fn uinput_paste(shift: bool) -> Result<()> {
+    let mut keys = AttributeSet::<KeyCode>::new();
+    for k in [KeyCode::KEY_LEFTCTRL, KeyCode::KEY_LEFTSHIFT, KeyCode::KEY_V] {
+        keys.insert(k);
+    }
+    let mut dev = VirtualDevice::builder()?
+        .name("live-dictation-virtual-kbd")
+        .with_keys(&keys)?
+        .build()?;
+    // Give the compositor time to pick up the new device.
+    thread::sleep(Duration::from_millis(150));
+
+    let key = |k: KeyCode, v: i32| InputEvent::new(EvType::KEY.0, k.code(), v);
+    let mut seq = vec![key(KeyCode::KEY_LEFTCTRL, 1)];
+    if shift {
+        seq.push(key(KeyCode::KEY_LEFTSHIFT, 1));
+    }
+    seq.push(key(KeyCode::KEY_V, 1));
+    seq.push(key(KeyCode::KEY_V, 0));
+    if shift {
+        seq.push(key(KeyCode::KEY_LEFTSHIFT, 0));
+    }
+    seq.push(key(KeyCode::KEY_LEFTCTRL, 0));
+    for ev in seq {
+        dev.emit(&[ev])?;
+        thread::sleep(Duration::from_millis(8));
+    }
+    thread::sleep(Duration::from_millis(50));
+    Ok(())
 }
 
 fn transcription_worker(rx: mpsc::Receiver<AudioJob>) {
@@ -261,6 +300,57 @@ fn transcription_worker(rx: mpsc::Receiver<AudioJob>) {
     eprintln!("[live-dictation] Transcription worker stopped.");
 }
 
+/// Watches every keyboard under /dev/input for the push-to-talk key (Right Alt / AltGr).
+/// Works on Wayland and X11 alike; requires membership in the `input` group.
+fn listen_evdev(
+    on_press: impl Fn() + Send + Clone + 'static,
+    on_release: impl Fn() + Send + Clone + 'static,
+) -> Result<()> {
+    let mut handles = Vec::new();
+    for (path, mut dev) in evdev::enumerate() {
+        let has_key = dev
+            .supported_keys()
+            .is_some_and(|k| k.contains(KeyCode::KEY_RIGHTALT) && k.contains(KeyCode::KEY_A));
+        if !has_key {
+            continue;
+        }
+        eprintln!(
+            "[live-dictation] Listening on {} ({})",
+            path.display(),
+            dev.name().unwrap_or("?")
+        );
+        let (press, release) = (on_press.clone(), on_release.clone());
+        handles.push(thread::spawn(move || {
+            loop {
+                match dev.fetch_events() {
+                    Ok(events) => {
+                        for ev in events {
+                            if ev.event_type() == EvType::KEY && ev.code() == KeyCode::KEY_RIGHTALT.code() {
+                                match ev.value() {
+                                    1 => press(),
+                                    0 => release(),
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[live-dictation] evdev read error: {e}");
+                        break;
+                    }
+                }
+            }
+        }));
+    }
+    if handles.is_empty() {
+        anyhow::bail!("no readable keyboard in /dev/input — is the user in the `input` group?");
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     eprintln!("[live-dictation] Starting up…");
 
@@ -327,11 +417,12 @@ fn main() -> Result<()> {
 
     eprintln!("[live-dictation] Daemon ready.");
 
-    listen(move |event: Event| match event.event_type {
-        EventType::KeyPress(Key::AltGr) => {
-            // EventType::KeyPress(Key::AltGr) => {
-            if !recording_kbd.swap(true, Ordering::SeqCst) {
-                audio_frames_kbd.lock().unwrap().clear();
+    let on_press = {
+        let recording = recording_kbd.clone();
+        let frames = audio_frames_kbd.clone();
+        move || {
+            if !recording.swap(true, Ordering::SeqCst) {
+                frames.lock().unwrap().clear();
                 eprintln!("[live-dictation] Recording…");
                 notify(
                     "live-dictation",
@@ -341,39 +432,39 @@ fn main() -> Result<()> {
                 );
             }
         }
-        EventType::KeyRelease(Key::AltGr) => {
-            if recording_kbd.swap(false, Ordering::SeqCst) {
-                let released_at = Instant::now();
-                let frames = {
-                    let mut lock = audio_frames_kbd.lock().unwrap();
-                    let f = lock.clone();
-                    lock.clear();
-                    f
-                };
-                let (win_id, win_class) = get_active_window();
-                eprintln!("[live-dictation] Target window class={win_class:?}");
-                eprintln!("[live-dictation] Transcribing…");
-                notify(
-                    "live-dictation",
-                    "Transcribing…",
-                    "audio-input-microphone-muted",
-                    2000,
-                );
-                if frames.len() >= MIN_AUDIO_SAMPLES {
-                    let _ = tx_kbd.send(AudioJob {
-                        frames,
-                        win_id,
-                        win_class,
-                        released_at,
-                    });
-                } else {
-                    eprintln!("[live-dictation] Audio too short, skipping.");
-                }
+    };
+    let on_release = move || {
+        if recording_kbd.swap(false, Ordering::SeqCst) {
+            let released_at = Instant::now();
+            let frames = {
+                let mut lock = audio_frames_kbd.lock().unwrap();
+                let f = lock.clone();
+                lock.clear();
+                f
+            };
+            let (win_id, win_class) = get_active_window();
+            eprintln!("[live-dictation] Target window class={win_class:?}");
+            eprintln!("[live-dictation] Transcribing…");
+            notify(
+                "live-dictation",
+                "Transcribing…",
+                "audio-input-microphone-muted",
+                2000,
+            );
+            if frames.len() >= MIN_AUDIO_SAMPLES {
+                let _ = tx_kbd.send(AudioJob {
+                    frames,
+                    win_id,
+                    win_class,
+                    released_at,
+                });
+            } else {
+                eprintln!("[live-dictation] Audio too short, skipping.");
             }
         }
-        _ => {}
-    })
-    .map_err(|e| anyhow::anyhow!("rdev listen error: {e:?}"))?;
+    };
+
+    listen_evdev(on_press, on_release)?;
 
     drop(tx);
     let _ = transcription_thread.join();
