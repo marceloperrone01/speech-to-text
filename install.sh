@@ -29,6 +29,14 @@ echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput
 sudo udevadm control --reload-rules
 sudo udevadm trigger /dev/uinput
 
+echo "==> Installing GNOME Shell extension (focused-window detection on Wayland)…"
+EXT_UUID="live-dictation-focus@local"
+mkdir -p "$HOME/.local/share/gnome-shell/extensions"
+rm -rf "$HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
+cp -r "$(dirname "$0")/gnome-extension/$EXT_UUID" "$HOME/.local/share/gnome-shell/extensions/"
+gnome-extensions enable "$EXT_UUID" 2>/dev/null \
+    || echo "    Extension will be enabled after you log out and back in (Wayland needs a new session to load it)."
+
 mkdir -p "$MODEL_DIR"
 MODEL_NAME="$(basename "$MODEL_FILE")"
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$MODEL_NAME"

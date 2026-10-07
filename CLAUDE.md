@@ -77,7 +77,7 @@ Three concurrent execution contexts:
 
 **Keyboard listener:** the `evdev` crate reads `/dev/input/event*` directly (works on Wayland and X11) — requires membership in the `input` group. `rdev::listen` was dropped because it uses X11 XRecord, which sees no keys on Wayland. Hotplugged keyboards need a service restart.
 
-**Text injection:** `xclip -selection clipboard` (via XWayland, bridged to the Wayland clipboard), then `uinput_paste()` emits Ctrl+V (Ctrl+Shift+V for terminals) from a virtual keyboard; needs `/dev/uinput` access (udev rule from `install.sh`). If uinput fails, it falls back to `xdotool key` (X11/XWayland only). On Wayland the active window can't be detected for native windows, so the class defaults to `unknown-terminal` → Ctrl+Shift+V.
+**Text injection:** `xclip -selection clipboard` (via XWayland, bridged to the Wayland clipboard), then `uinput_paste()` emits Ctrl+V (Ctrl+Shift+V for terminals) from a virtual keyboard; needs `/dev/uinput` access (udev rule from `install.sh`). If uinput fails, it falls back to `xdotool key` (X11/XWayland only). Terminal detection: GNOME blocks `Shell.Eval`/`Introspect` for other clients and `xdotool` only sees XWayland windows, so `gnome-extension/live-dictation-focus@local` (installed by `install.sh`) exports `org.livedictation.Focus.GetFocus` on the session bus; `wayland_focus_class()` calls it via `gdbus` at key release and the class is matched by substring against `TERMINAL_CLASSES`. A newly installed extension only loads after logging out and back in. Without it, detection falls back to `xdotool`, then `unknown-terminal` → Ctrl+Shift+V.
 
 **Pre-paste delay:** `PRE_TYPE_SLEEP_MS = 50` lets the push-to-talk key-up be processed before the paste fires.
 

@@ -66,7 +66,36 @@ fn notify(summary: &str, body: &str, icon: &str, timeout_ms: u32) {
         .spawn();
 }
 
+/// Focused window class on GNOME/Wayland via the bundled `live-dictation-focus`
+/// shell extension (GNOME blocks Shell.Eval / Introspect for other clients).
+fn wayland_focus_class() -> Option<String> {
+    let out = Command::new("gdbus")
+        .args([
+            "call",
+            "--session",
+            "--dest",
+            "org.gnome.Shell",
+            "--object-path",
+            "/org/livedictation/Focus",
+            "--method",
+            "org.livedictation.Focus.GetFocus",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    // Output looks like: ('gnome-terminal-server|org.gnome.Terminal',)
+    let s = String::from_utf8_lossy(&out.stdout);
+    let inner = s.split('\'').nth(1)?.trim().to_lowercase();
+    (!inner.is_empty() && inner != "|").then_some(inner)
+}
+
 fn get_active_window() -> (String, String) {
+    if let Some(cls) = wayland_focus_class() {
+        return (String::new(), cls);
+    }
+
     let display = env::var("DISPLAY").unwrap_or_else(|_| ":1".to_string());
     let xauth = env::var("XAUTHORITY").unwrap_or_else(|_| {
         let runtime = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
@@ -152,8 +181,11 @@ fn inject_text(text: &str, win_id: &str, win_class: &str) {
     });
 
     let cls = win_class;
-    let is_term =
-        TERMINAL_CLASSES.contains(&cls) || cls.starts_with("st-") || cls == "unknown-terminal";
+    // Wayland ids are like "gnome-terminal-server|org.gnome.terminal" or
+    // "com.mitchellh.ghostty|…", so match on substring rather than equality.
+    let is_term = TERMINAL_CLASSES.iter().any(|t| cls.contains(t))
+        || cls.starts_with("st-")
+        || cls == "unknown-terminal";
     let paste_key = if is_term { "ctrl+shift+v" } else { "ctrl+v" };
 
     eprintln!("[live-dictation] window class={cls:?} is_term={is_term} paste_key={paste_key}");

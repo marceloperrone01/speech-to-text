@@ -1,0 +1,6 @@
+{
+  "uuid": "live-dictation-focus@local",
+  "name": "Live Dictation Focus",
+  "description": "Exposes the focused window's class over D-Bus so live-dictation can pick the right paste shortcut on Wayland.",
+  "shell-version": ["48", "49", "50"]
+}
